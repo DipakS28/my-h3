@@ -29,39 +29,43 @@
 
 
 
-	// const conn = duckDbInstance.connect().then(async (c) => {
+	const conn = duckDbInstance.connect().then(async (c) => {
 
-	// 	console.log("Hiiiiiiiiiii");
+		
 
-	// 	const INSTALL_QUERY = await c?.query(
-	// 		'INSTALL spatial; LOAD spatial; INSTALL parquet; LOAD parquet;'
-	// 	);
-	// 	const DATA_DICT = await c?.query(
-	// 		"DESCRIBE SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 1;"
-	// 	);
-	// 	const PREVIEW_TABLE = await c?.query(
-	// 		`DROP TABLE IF EXISTS preview; CREATE TABLE preview AS SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 100;`
-	// 	);
-	// 	const PREVIEW_EXPORT = await c?.query(`COPY preview TO 'data_preview.csv' (FORMAT CSV);`);
-	// 	const PREVIEW_QUERY = await c?.query(`SELECT * FROM preview;`);
+		// const INSTALL_QUERY = await c?.query(
+		// 	'INSTALL spatial; LOAD spatial; INSTALL parquet; LOAD parquet;'
+		// );
+		// const DATA_DICT = await c?.query(
+		// 	"DESCRIBE SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 1;"
+		// );
 
-	// 	queryResult = {
-	// 		rows: PREVIEW_QUERY.toArray().map((r) => r.toJSON()),
-	// 		fields: PREVIEW_QUERY.schema.fields
-	// 	};
-	// 	dataDictionary = {
-	// 		rows: DATA_DICT.toArray().map((r) => r.toJSON()),
-	// 		fields: DATA_DICT.schema.fields
-	// 	};
 
-	// 	const pqBuf = await $duckDbInstance.db.copyFileToBuffer('data_preview.csv');
+		// const PREVIEW_TABLE = await c?.query(
+		// 	`DROP TABLE IF EXISTS preview; CREATE TABLE preview AS SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 100;`
+		// );
+		// const PREVIEW_EXPORT = await c?.query(`COPY preview TO 'data_preview.csv' (FORMAT CSV);`);
+		// const PREVIEW_QUERY = await c?.query(`SELECT * FROM preview;`);
 
-	// 	dlLink = URL.createObjectURL(new Blob([pqBuf]));
-	// 	loading = false;
-	// 	//test
-	// 	c?.close();
-	// 	await $duckDbInstance.db?.dropFile('data_preview.csv');
-	// });
+		// queryResult = {
+		// 	rows: PREVIEW_QUERY.toArray().map((r) => r.toJSON()),
+		// 	fields: PREVIEW_QUERY.schema.fields
+		// };
+		// dataDictionary = {
+		// 	rows: DATA_DICT.toArray().map((r) => r.toJSON()),
+		// 	fields: DATA_DICT.schema.fields
+		// };
+		
+
+		// const pqBuf = await $duckDbInstance.db.copyFileToBuffer('data_preview.csv');
+
+		// dlLink = URL.createObjectURL(new Blob([pqBuf]));
+		// loading = false;
+		// // console.log("dlLink",dlLink);
+		// //test
+		// c?.close();
+		// await $duckDbInstance.db?.dropFile('data_preview.csv');
+	});
 
 	onMount(async () => {
 		map = new maplibregl.Map({
@@ -221,7 +225,7 @@
 		);
 	};
 
-	const calculateH3Indices = () => {
+	const calculateH3Indices = async () => {
 		if (polygonCoordinates.length === 0) return;
 
 		const closedPolygon = polygonCoordinates.concat([
@@ -255,6 +259,22 @@
 			console.log("H3 h3_7 at resolution", h3Resolution, ":", h3_7);
 		}
 
+		if (h3Indices.length > 0) {
+		// Fetch data from DuckDB using the H3 indices
+		const h3IndexList = h3Indices.map((index) => `'${index}'`).join(",");
+		const query = `SELECT * FROM 's3://txgio-copc-test/address_points_2024_county_z3-5-7_hex/*/*/*/*/*.parquet' WHERE z${h3Resolution} IN (${h3IndexList});`;
+		const result = await duckDbInstance.connect().then(async (conn) => {
+			return await conn.query(query);
+		});
+		console.log("Result",result);
+		// Process and store the result
+		queryResult = {
+			rows: result.toArray().map((r) => r.toJSON()),
+			fields: result.schema.fields,
+		};
+		console.log("Query Result:", queryResult);
+	}
+
 		console.log("H3 Indices at resolution", h3Resolution, ":", h3Indices);
 	};
 
@@ -263,6 +283,7 @@
 		polygonCoordinates = [];
 		firstPoint = null;
 		secondPoint = null;
+		queryResult = null;
 		showFetchButton = false;
 		isDrawingRectangle = false;
 		// console.log("Cleared all polygons.");
