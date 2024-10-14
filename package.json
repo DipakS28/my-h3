@@ -30,6 +30,7 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"@turf/turf": "^7.1.0",
 		"duckdb": "^1.1.1"
 	}
 }

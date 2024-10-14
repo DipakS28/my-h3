@@ -4,21 +4,22 @@
 	import MapboxDraw from "@mapbox/mapbox-gl-draw";
 	import * as h3 from "h3-js";
 	import _ from "lodash";
-	import { duckDbInstance } from "$lib/duckdbInstanceStore"
-
+	import { duckDbInstance } from "$lib/duckdbInstanceStore";
+	import * as turf from "@turf/turf";
 
 	let dataDictionary;
 	let queryResult;
 	let loading = true;
 	let dlLink = null;
 
-
 	const geojsonUrl = `https://data.texas.gov/resource/m3yf-ffwm.geojson`;
+	// const countyGeojsonUrl = `https://data.texas.gov/resource/sw7f-2kkd.geojson;
 
 	let map;
 	let draw;
 	let h3Indices = [];
 	let polygonCoordinates = [];
+	let countyBoundariesGeojson = null;
 	let showFetchButton = false;
 	let firstPoint = null;
 	let secondPoint = null;
@@ -26,27 +27,20 @@
 	let countyLayerLoaded = false;
 	let drawingEnabled = true;
 	let currentZoom = 6;
-
-
+	let sqlQuery = '';
 
 	const conn = duckDbInstance.connect().then(async (c) => {
-
-		
-
-		// const INSTALL_QUERY = await c?.query(
-		// 	'INSTALL spatial; LOAD spatial; INSTALL parquet; LOAD parquet;'
-		// );
+		const INSTALL_QUERY = await c?.query(
+			'INSTALL spatial; LOAD spatial; INSTALL parquet; LOAD parquet;'
+		);
 		// const DATA_DICT = await c?.query(
 		// 	"DESCRIBE SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 1;"
 		// );
-
-
 		// const PREVIEW_TABLE = await c?.query(
 		// 	`DROP TABLE IF EXISTS preview; CREATE TABLE preview AS SELECT * FROM 's3://txgio-copc-test/stratmap24-addresspoints_48.parquet' LIMIT 100;`
 		// );
 		// const PREVIEW_EXPORT = await c?.query(`COPY preview TO 'data_preview.csv' (FORMAT CSV);`);
 		// const PREVIEW_QUERY = await c?.query(`SELECT * FROM preview;`);
-
 		// queryResult = {
 		// 	rows: PREVIEW_QUERY.toArray().map((r) => r.toJSON()),
 		// 	fields: PREVIEW_QUERY.schema.fields
@@ -55,10 +49,7 @@
 		// 	rows: DATA_DICT.toArray().map((r) => r.toJSON()),
 		// 	fields: DATA_DICT.schema.fields
 		// };
-		
-
 		// const pqBuf = await $duckDbInstance.db.copyFileToBuffer('data_preview.csv');
-
 		// dlLink = URL.createObjectURL(new Blob([pqBuf]));
 		// loading = false;
 		// // console.log("dlLink",dlLink);
@@ -129,6 +120,7 @@
 					"Polygon coordinates captured:",
 					polygonCoordinates,
 				);
+				// checkCountyIntersections(polygonCoordinates);
 			}
 		});
 
@@ -143,6 +135,7 @@
 					polygonCoordinates,
 				);
 			}
+			// checkCountyIntersections(polygonCoordinates);
 		});
 
 		map.on("click", (e) => {
@@ -184,6 +177,7 @@
 			});
 
 			countyLayerLoaded = true;
+			countyBoundariesGeojson = geojson;
 		} catch (error) {
 			console.error("Error :", error);
 		}
@@ -248,10 +242,7 @@
 			if (currentZoom > 12) {
 				currentZoom = 12;
 			}
-			h3Indices = h3.polygonToCells(
-				formattedPolygon,
-				currentZoom,
-			);
+			h3Indices = h3.polygonToCells(formattedPolygon, currentZoom);
 			console.log("H3 h3_7 at resolution 15", ":", h3Indices);
 			let cell = h3Indices[0];
 			console.log("cell", cell);
@@ -259,23 +250,27 @@
 			console.log("H3 h3_7 at resolution", h3Resolution, ":", h3_7);
 		}
 
-		if (h3Indices.length > 0) {
-		// Fetch data from DuckDB using the H3 indices
-		const h3IndexList = h3Indices.map((index) => `'${index}'`).join(",");
-		const query = `SELECT * FROM 's3://txgio-copc-test/address_points_2024_county_z3-5-7_hex/*/*/*/*/*.parquet' WHERE z${h3Resolution} IN (${h3IndexList});`;
-		const result = await duckDbInstance.connect().then(async (conn) => {
-			return await conn.query(query);
-		});
-		console.log("Result",result);
-		// Process and store the result
-		queryResult = {
-			rows: result.toArray().map((r) => r.toJSON()),
-			fields: result.schema.fields,
-		};
-		console.log("Query Result:", queryResult);
-	}
+		checkCountyIntersections(polygonCoordinates);
+
+			if (h3Indices.length > 0) {
+			// Fetch data from DuckDB using the H3 indices
+			const h3IndexList = h3Indices.map((index) => `'${index}'`).join(",");
+			// const query = `SELECT * FROM 's3://txgio-copc-test/address_points_2024_county_z3-5-7_hex/*/*/*/*/*.parquet' WHERE z${h3Resolution} IN (${h3IndexList});`;
+			const query = `SELECT * FROM 's3://txgio-copc-test/address_points_2024_county/*/*.parquet' WHERE County IN ('Coke', 'Tom Green');`;
+			const result = await duckDbInstance.connect().then(async (conn) => {
+				return await conn.query(sqlQuery);
+			});
+			console.log("Result",result);
+			// Process and store the result
+			queryResult = {
+				rows: result.toArray().map((r) => r.toJSON()),
+				fields: result.schema.fields,
+			};
+			console.log("Query Result:", queryResult);
+		}
 
 		console.log("H3 Indices at resolution", h3Resolution, ":", h3Indices);
+
 	};
 
 	const clearPolygon = () => {
@@ -344,6 +339,39 @@
 			// console.log("Drawing disabled");
 		}
 	};
+
+	function checkCountyIntersections(polygonCoordinates: any[]) {
+		console.log("gi", polygonCoordinates);
+		if (!countyBoundariesGeojson) return;
+
+		// Close the polygon if needed
+		// const closedPolygon = polygonCoordinates.concat([polygonCoordinates[0]]);
+
+		// Create a Turf.js polygon feature from the drawn polygon
+		const drawnPolygon = turf.polygon([polygonCoordinates]);
+
+		// Iterate through all county boundaries and check for intersections
+		const intersectingCounties = countyBoundariesGeojson.features.filter(
+			(county) => {
+				const countyPolygon = turf.multiPolygon(
+					county.geometry.coordinates,
+				);
+				return turf.booleanOverlap(drawnPolygon, countyPolygon);
+			},
+		);
+
+		const countyNames = intersectingCounties.map(
+			(county) => county.properties.name,
+		);
+
+		const countyNamesString = countyNames
+			.map((name) => `'${name}'`)
+			.join(", ");
+
+		sqlQuery = `SELECT * FROM 's3://txgio-copc-test/address_points_2024_county/*/*.parquet' WHERE County IN (${countyNamesString});`;
+
+		console.log("Generated SQL Query:", sqlQuery);
+	}
 </script>
 
 <div id="map"></div>
